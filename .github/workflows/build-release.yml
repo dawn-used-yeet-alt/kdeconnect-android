@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: 2026 KDE Connect contributors
+#
+# SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+name: Build and release
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK platform
+        run: sdkmanager "platforms;android-37"
+
+      - name: Build, lint and test
+        run: ./gradlew --no-daemon -Pci --console=plain assembleDebug lintDebug testDebugUnitTest
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdeconnect-android-debug
+          path: build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  release:
+    name: Create release
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: kdeconnect-android-debug
+          path: release
+
+      - name: Read version and prepare release metadata
+        id: metadata
+        run: |
+          version=$(sed -n 's/.*versionName = "\(.*\)"/\1/p' build.gradle.kts | head -n 1)
+          short_sha=${GITHUB_SHA::7}
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            tag="${GITHUB_REF_NAME}"
+            prerelease=false
+          else
+            tag="v${version}-${GITHUB_RUN_NUMBER}"
+            prerelease=$([[ "${GITHUB_REF}" == "refs/heads/master" ]] && echo false || echo true)
+          fi
+          apk="release/kdeconnect-android-${version}-${short_sha}-debug.apk"
+          mv release/*.apk "${apk}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "short_sha=${short_sha}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
+          echo "apk=${apk}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.metadata.outputs.tag }}" \
+            "${{ steps.metadata.outputs.apk }}" \
+            --target "${GITHUB_SHA}" \
+            --title "KDE Connect Android ${{ steps.metadata.outputs.version }} (${{ steps.metadata.outputs.short_sha }})" \
+            --notes "Automatic build of ${GITHUB_REF_NAME} at ${GITHUB_SHA}." \
+            ${{ steps.metadata.outputs.prerelease == 'true' && '--prerelease' || '--latest' }}
