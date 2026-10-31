@@ -35,11 +35,9 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           # The legacy "tools" package is no longer available in recent SDK
-          # releases, so only install platform-tools here.
+          # releases, so only install platform-tools here. Gradle downloads
+          # the platform and build-tools required by compileSdk.
           packages: platform-tools
-
-      - name: Install Android SDK platform
-        run: sdkmanager "platforms;android-37"
 
       - name: Build, lint and test
         run: ./gradlew --no-daemon -Pci --console=plain assembleDebug lintDebug testDebugUnitTest
