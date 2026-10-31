@@ -14,6 +14,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import android.widget.Toast
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.ContextCompat
@@ -28,6 +29,7 @@ import org.kde.kdeconnect_tp.R
 @LoadablePlugin
 class ClipboardPlugin : Plugin() {
     private var uploadFileJob: ClipboardUploadFileJob? = null
+    private var pendingClipboardFile: Pair<Uri, String?>? = null
     private var receiveFileJob: ClipboardReceiveFileJob? = null
 
     override val displayName: String
@@ -106,26 +108,51 @@ class ClipboardPlugin : Plugin() {
     }
 
     @VisibleForTesting
+    @Synchronized
     fun propagateClipboard(uri: Uri, mimeType: String?) {
         // Clipboard changes can happen in quick succession (for example when taking several
-        // screenshots). Only the latest item is interesting, so cancel the previous transfer.
-        uploadFileJob?.cancel()
+        // screenshots). Only the latest item is interesting, so keep it until the running
+        // transfer has finished instead of sending multiple files at once.
+        pendingClipboardFile = uri to mimeType
+        startPendingClipboardUpload()
+    }
+
+    @Synchronized
+    private fun startPendingClipboardUpload() {
+        if (uploadFileJob != null) {
+            return
+        }
+
+        val (uri, mimeType) = pendingClipboardFile ?: return
+        pendingClipboardFile = null
 
         val job = ClipboardUploadFileJob(device, context, uri, mimeType) { finishedJob ->
-            if (uploadFileJob === finishedJob) {
-                uploadFileJob = null
+            synchronized(this) {
+                if (uploadFileJob === finishedJob) {
+                    uploadFileJob = null
+                    startPendingClipboardUpload()
+                }
             }
         }
         uploadFileJob = job
         job.start()
     }
 
+    @Synchronized
     private fun receiveClipboardFile(np: NetworkPacket) {
-        receiveFileJob?.cancel()
+        if (receiveFileJob != null) {
+            Log.w(TAG, "Ignoring clipboard file while another one is being received")
+            // The payload socket is already connected at this point, so close it to let the
+            // sender know that this transfer was not accepted.
+            np.payload?.close()
+            return
+        }
 
         val job = ClipboardReceiveFileJob(device, np) { finishedJob ->
-            if (receiveFileJob === finishedJob) {
-                receiveFileJob = null
+            synchronized(this) {
+                if (receiveFileJob === finishedJob) {
+                    receiveFileJob = null
+                }
             }
             (finishedJob as ClipboardReceiveFileJob).receivedFile?.let { receivedFile ->
                 ClipboardListener.instance(context).setFile(receivedFile.uri, receivedFile.mimeType)
@@ -154,8 +181,11 @@ class ClipboardPlugin : Plugin() {
 
     override fun onDestroy() {
         ClipboardListener.instance(context).removeObserver(observer)
-        uploadFileJob?.cancel()
-        receiveFileJob?.cancel()
+        synchronized(this) {
+            pendingClipboardFile = null
+            uploadFileJob?.cancel()
+            receiveFileJob?.cancel()
+        }
     }
 
     override val supportedPacketTypes: Array<String> = arrayOf(
@@ -216,6 +246,8 @@ class ClipboardPlugin : Plugin() {
     }
 
     companion object {
+        private const val TAG = "ClipboardPlugin"
+
         /**
          * Packet containing just clipboard contents, sent when a device updates its clipboard.
          *

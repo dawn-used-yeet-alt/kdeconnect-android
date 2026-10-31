@@ -47,6 +47,7 @@ class ClipboardReceiveFileJob(
             val mimeType = packetMimeType ?: FilesHelper.getMimeTypeFromFile(originalFilename)
             val filename = originalFilename ?: "clipboard-${System.currentTimeMillis()}"
             val filenameWithExtension = FilesHelper.ensureFileExtension(filename, mimeType)
+                .let { if (it.substringAfterLast('.', "").isEmpty()) "$it.bin" else it }
 
             val directory = File(device.context.cacheDir, CLIPBOARD_DIRECTORY)
             if (!directory.exists() && !directory.mkdirs()) {
