@@ -30,6 +30,18 @@ object FilesHelper {
         return mime ?: "*/*"
     }
 
+    /**
+     * Appends the extension matching [mimeType] if [filename] does not have one yet.
+     */
+    fun ensureFileExtension(filename: String, mimeType: String?): String {
+        if (filename.substringAfterLast('.', "").isNotEmpty()) {
+            return filename
+        }
+        val extension = mimeType?.let { MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
+            ?: return filename
+        return "$filename.$extension"
+    }
+
     fun findValidNonExistingFileName(folder: DocumentFile, filename: String): String {
         var filename = filename.trimEnd('.')
         if (filename.isEmpty()) {

@@ -120,6 +120,12 @@ class ClipboardPluginTest {
         clipboardPlugin.onPacketReceived(invalidPacket) // Should throw exception
     }
 
+    @Test
+    fun testSupportsClipboardFilePacket() {
+        Assert.assertTrue(clipboardPlugin.supportedPacketTypes.contains("kdeconnect.clipboard.file"))
+        Assert.assertTrue(clipboardPlugin.outgoingPacketTypes.contains("kdeconnect.clipboard.file"))
+    }
+
     // LOCAL -> REMOTE
 
     @Test
